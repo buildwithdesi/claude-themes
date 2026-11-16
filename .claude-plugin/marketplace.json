@@ -1,0 +1,5 @@
+{
+  "name": "claude-themes",
+  "owner": { "name": "Digital Alchemy" },
+  "plugins": [{ "name": "custom-theme", "source": "./" }]
+}
