@@ -1,5 +1,5 @@
 import type { On } from 'claude-code'
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { THEMES } from '../hooks/themes.ts'
@@ -12,7 +12,7 @@ function slash($: Engine, args: string) {
 type Set = { backdrop?: { scene?: string }; overrideColorScheme?: string; colors?: unknown }
 
 /** Hooks that stand for the engine: an in-memory store and a theme that records each set. */
-function engine(on: On, kept: Map<string, unknown>, sets: Set[]) {
+function engine(on: On, kept: Map<string, unknown>, sets: Set[], clears: number[] = []) {
   on('command.register', () => ({ value: { command: 'custom-theme' } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('store.get', (_, e) => ({ value: kept.get(e.key) }))
@@ -26,7 +26,11 @@ function engine(on: On, kept: Map<string, unknown>, sets: Set[]) {
 
     return { value: { isDrawn: true as const, requestId: 'r1' } }
   })
-  on('theme.clear', () => ({ value: { isDrawn: false as const, reason: 'cleared' } }))
+  on('theme.clear', () => {
+    clears.push(1)
+
+    return { value: { isDrawn: false as const, reason: 'cleared' } }
+  })
   on('ui.status', () => ({ value: undefined }))
 }
 
@@ -147,4 +151,76 @@ test('picking another look switches this one off', { plugins: [OTHER] }, async (
   await $.command.run({ command: 'other', args: '' } as Parameters<Engine['command']['run']>[0])
 
   expect(kept.get('theme')).toBe('off')
+})
+
+// The order mods start in is not fixed. A mod that sets its look before this
+// one's start has run is still not the person choosing it.
+test('a look set before this mod starts does not switch it off', { plugins: [OTHER] }, async ($, on) => {
+  const kept = new Map<string, unknown>([['theme', 'snow-pines']])
+  const sets: Set[] = []
+  engine(on, kept, sets)
+
+  await $.command.run({ command: 'other', args: '' } as Parameters<Engine['command']['run']>[0])
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  expect(kept.get('theme')).toBe('snow-pines')
+  expect(sets.at(-1)?.backdrop?.scene?.startsWith('ct_snow-pines_')).toBe(true)
+})
+
+// The store stands for the one file every open session shares: a write to
+// `kept` from the test is a pick made in another session.
+
+test('an open session switches to a pick made in another session', async ($, on) => {
+  const clock = mock.clock(on)
+  const kept = new Map<string, unknown>([['theme', 'ember']])
+  const sets: Set[] = []
+  engine(on, kept, sets)
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  kept.set('theme', 'aurora')
+  await clock.advance(3000)
+
+  expect(sets.at(-1)?.backdrop?.scene?.startsWith('ct_aurora_')).toBe(true)
+})
+
+test('off in another session turns this one off too', async ($, on) => {
+  const clock = mock.clock(on)
+  const kept = new Map<string, unknown>([['theme', 'ember']])
+  const clears: number[] = []
+  engine(on, kept, [], clears)
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  kept.set('theme', 'off')
+  await clock.advance(3000)
+
+  expect(clears.length).toBe(1)
+})
+
+test('with no new pick, the check changes nothing', async ($, on) => {
+  const clock = mock.clock(on)
+  const kept = new Map<string, unknown>([['theme', 'ember']])
+  const sets: Set[] = []
+  const clears: number[] = []
+  engine(on, kept, sets, clears)
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const before = sets.length
+
+  await clock.advance(9000)
+
+  expect(sets.length).toBe(before)
+  expect(clears.length).toBe(0)
+})
+
+test('the check never wipes a look another mod set in this session', { plugins: [OTHER] }, async ($, on) => {
+  const clock = mock.clock(on)
+  const kept = new Map<string, unknown>([['theme', 'ember']])
+  const clears: number[] = []
+  engine(on, kept, [], clears)
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  await $.command.run({ command: 'other', args: '' } as Parameters<Engine['command']['run']>[0])
+  await clock.advance(6000)
+
+  expect(kept.get('theme')).toBe('off')
+  expect(clears.length).toBe(0)
 })

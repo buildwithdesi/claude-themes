@@ -30,7 +30,7 @@ claude plugin install custom-theme --marketplace buildwithdesi/claude-themes
 | `/custom-theme next` | Steps through the list |
 | `/custom-theme off` | Goes back to the app's own look |
 
-Your pick is saved, so your next session opens with it.
+Your pick is saved. New sessions open with it, and sessions you already have open switch to it within a few seconds.
 
 ## The themes
 
@@ -68,7 +68,8 @@ Your pick is saved, so your next session opens with it.
 
 - The backgrounds draw in the Claude desktop and mobile apps. A plain terminal session keeps its normal look.
 - A light theme switches the app to light mode while it is on. A dark theme switches it to dark mode.
-- `/custom-theme off` gives you the app's own look back at any time.
+- `/custom-theme off` gives you the app's own look back at any time, in every open session.
+- Running another theme mod too? Your pick still wins when a session starts. If you switch that mod on with its own command, this pack turns itself off everywhere.
 - `tools/preview.mjs` is an optional script for people who make themes. The themes never run it. It needs Node and Python.
 
 ## License

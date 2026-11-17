@@ -6,7 +6,8 @@
 //   /custom-theme next         step through the list
 //   /custom-theme off          back to the app's own look
 //
-// The choice is saved, so the next session opens with it.
+// The choice is saved, so the next session opens with it, and every session
+// already open switches to it within a few seconds.
 
 import type { EngineInterface, Register, ThemeSetArgs } from 'claude-code'
 
@@ -25,6 +26,20 @@ const OFF = 'off'
 // at start (da-theme does) is not the person choosing it, so it does not
 // switch this mod off.
 let booting = false
+
+// False until this mod's session.start has finished. WHY: the order mods
+// start in is not fixed, so another mod's start look can land before this
+// mod's start runs. Without this, that look saved "off" for every session.
+let started = false
+
+// How often an open session checks for a pick made in another session.
+// WHY: the store is one file every session and account shares, but a session
+// reads it only at start. Without this, open sessions keep an old theme.
+const SYNC_MS = 3000
+
+// The pick this session shows now, so the check acts only on a change.
+let shown: string | undefined
+let checking = false
 
 // Built scenes are kept: switching back to one costs nothing.
 const built = new Map<string, string>()
@@ -113,12 +128,44 @@ async function saved($: EngineInterface): Promise<string> {
 async function stepAside($: EngineInterface, by: string): Promise<void> {
   const self = $.plugin.name
 
-  if (booting || by === self || by.startsWith(`${self}@`) || by === COMMAND || by.startsWith(`${COMMAND}@`)) return
+  if (booting || !started || by === self || by.startsWith(`${self}@`) || by === COMMAND || by.startsWith(`${COMMAND}@`)) return
+  // This session now shows the other mod's look. Marking it off here keeps
+  // the sync check from clearing that look on its next tick.
+  shown = OFF
 
   try {
     if ((await saved($)) !== OFF) await $.store.set(STORE_KEY, OFF)
   } catch {
     // The store is unavailable: the worst case is this theme returning next session.
+  }
+}
+
+/**
+ * Puts this session on the newest pick when another session changed it.
+ * It never throws: it runs on a timer, and the next tick tries again.
+ */
+async function follow($: EngineInterface): Promise<void> {
+  if (checking) return
+  checking = true
+
+  try {
+    const kept = await saved($)
+
+    if (kept === shown) return
+    shown = kept
+
+    if (kept === OFF) {
+      await $.theme.clear()
+
+      return
+    }
+    const def = THEMES.find(one => one.id === kept)
+
+    if (def !== undefined) await apply($, def)
+  } catch {
+    // The store or the theme was busy for a moment.
+  } finally {
+    checking = false
   }
 }
 
@@ -136,16 +183,21 @@ export const register: Register = on => {
       const result = await next(e)
       const kept = await saved($)
       const chosen = THEMES.find(one => one.id === kept)
+      shown = kept
 
       if (chosen !== undefined) {
         const answer = await apply($, chosen)
 
         if (!answer.includes(' is on.')) $.ui.status(answer)
       }
+      $.clock.every(SYNC_MS, () => {
+        void follow($)
+      })
 
       return result
     } finally {
       booting = false
+      started = true
     }
   })
 
@@ -202,6 +254,7 @@ async function run($: EngineInterface, args: string): Promise<{ text: string }> 
     }
 
     if (words === OFF) {
+      shown = OFF
       await $.store.set(STORE_KEY, OFF)
       const cleared = await $.theme.clear()
 
@@ -231,6 +284,7 @@ async function run($: EngineInterface, args: string): Promise<{ text: string }> 
     }
 
     if (pick === undefined) return { text: listing(current) }
+    shown = pick.id
     await $.store.set(STORE_KEY, pick.id)
 
     return { text: await apply($, pick) }
